@@ -33,7 +33,8 @@ class SmtpKeywords():
     print 'Handle: %d' % self.__stub_handle
     if self.__stub_started:
       logger.info('Stopping STUB')
-      Process().terminate_process(self.__stub_handle, kill=True)
+      #Process().terminate_process(self.__stub_handle, kill=True)
+      Process().terminate_all_processes(kill=True)
     else:
       logger.warn('Stub already stopped')
 
@@ -44,7 +45,9 @@ class SmtpKeywords():
 
     Reset (clears) the mail store
     """
-    pass
+    logger.info('Reset mail store')
+    if not self.__smtpserver:
+      self.open_smtpmgmt_session()
 
   # Smtp Manager
 

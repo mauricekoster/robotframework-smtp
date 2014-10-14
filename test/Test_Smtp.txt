@@ -1,0 +1,11 @@
+*** Settings ***
+Library           ../src/SmtpLibrary
+
+*** Test Cases ***
+Test start/stop
+    Start Smtp Stub
+    Sleep    3s
+    Stop Smtp Stub
+
+Reset mail store
+    Reset Smtp Stub
