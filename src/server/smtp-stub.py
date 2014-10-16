@@ -28,6 +28,7 @@ COMMASPACE = ', '
 # Internal mail store
 __mailstore = {}
 
+
 class SMTPMgmtChannel(asynchat.async_chat):
     COMMAND = 0
     DATA = 1
@@ -57,12 +58,15 @@ class SMTPMgmtChannel(asynchat.async_chat):
             return
 
         logger.debug('Peer: %s' % repr(self.__peer) )
-        self.push('220 %s %s' % (self.__fqdn, __version__))
+        self.push('100 %s %s' % (self.__fqdn, __version__))
         self.set_terminator('\r\n')
 
     # Overrides base class for convenience
     def push(self, msg):
         asynchat.async_chat.push(self, msg + '\r\n')
+
+    def pushdata(self, data):
+        asynchat.async_chat.push(self, data)
 
     # Implementation of base class abstract method
     def collect_incoming_data(self, data):
@@ -88,13 +92,13 @@ class SMTPMgmtChannel(asynchat.async_chat):
                 arg = line[i+1:].strip()
             method = getattr(self, 'smtpmgmt_' + command, None)
             if not method:
-                self.push('502 Error: command "%s" not implemented' % command)
+                self.push('500 Error: command "%s" not implemented' % command)
                 return
             method(arg)
             return
         else:
             if self.__state != self.DATA:
-                self.push('451 Internal confusion')
+                self.push('500 Internal confusion')
                 return
             # Remove extraneous carriage returns and de-transparency according
             # to RFC 821, Section 4.5.2.
@@ -116,23 +120,29 @@ class SMTPMgmtChannel(asynchat.async_chat):
     # SMTP and ESMTP commands
     def smtpmgmt_HELO(self, arg):
         if not arg:
-            self.push('501 Syntax: HELO hostname')
+            self.push('500 Syntax: HELO hostname')
             return
         if self.__greeting:
-            self.push('503 Duplicate HELO/EHLO')
+            self.push('500 Duplicate HELO/EHLO')
         else:
             self.__greeting = arg
             self.push('250 %s' % self.__fqdn)
 
     def smtpmgmt_NOOP(self, arg):
         if arg:
-            self.push('501 Syntax: NOOP')
+            self.push('500 Syntax: NOOP')
         else:
             self.push('250 Ok')
 
+    def smtpmgmt_ECHO(self, arg):
+        if arg:
+            self.push('250 %s' % arg)
+        else:
+            self.push('500 Syntax: ECHO <message>')
+
     def smtpmgmt_RESET(self, arg):
       if arg:
-        self.push('501 Syntax: RESET')
+        self.push('500 Syntax: RESET')
       else:
         logger.info('Cleared internal mailstore')
         self.__mailstore.clear()
@@ -148,80 +158,135 @@ class SMTPMgmtChannel(asynchat.async_chat):
           cnt = 0
 
         logger.debug('# messages: %d' % cnt)
-        self.push('250 CNT = %d' % cnt)
+        self.push('250 %d' % cnt)
 
       else:
-        self.push('501 Syntax: MSGCNT <recipient>')
+        self.push('500 Syntax: MSGCNT <recipient>')
 
     def smtpmgmt_MSGLST(self, arg):
       if arg:
-        if arg in self.__mailstore:
-          cnt = len(self.__mailstore[arg])
+        args = arg.split()
+        rcpt = args[0]
+        mode = 'plain'
+        if len(args)>1:
+          mode = args[1]
+
+        if rcpt in self.__mailstore:
+          cnt = len(self.__mailstore[rcpt])
         else:
           cnt = 0
 
         logger.debug('# messages: %d' % cnt)
-        self.push('250 CNT %d' % cnt)
-        idx = 1
-        if cnt > 0:
-          for msg in self.__mailstore[arg]:
-            self.push("%03d : %s" % (idx, msg['subject']))
-            idx += 1
-          self.push('')
+
+        if mode == 'json':
+          if cnt == 0:
+            self.push('210 %d' % cnt)
+
+          else:
+            txt = json.dumps(self.__mailstore[rcpt], sort_keys=True,
+                    indent=1, separators=(',', ': '))
+
+            self.push('200 %d' % len(txt))
+            self.pushdata(txt)
+
+        else:
+          self.push('210 %d' % cnt)
+          idx = 1
+          if cnt > 0:
+            for msg in self.__mailstore[rcpt]:
+              self.push("%03d:%s" % (idx, msg['subject']))
+              idx += 1
 
       else:
-        self.push('501 Syntax: MSGLST <recipient>')
+        self.push('500 Syntax: MSGLST <recipient> [<mode>]')
 
     def smtpmgmt_MSGGET(self, arg):
       if arg:
-        self.push('250 "%s"' % arg)
-        rcpt, idx = arg.split()
+
+        args = arg.split()
+        rcpt, idx = args[0:2]
+        if len(args)==3:
+          mode = args[2]
+        else:
+          mode = 'plain'
+
         msgs = self.__mailstore[rcpt]
         msg = msgs[int(idx)-1]
-        self.push(msg['payload'])
-        self.push('')
+        if mode == 'json':
+          txt = json.dumps(msg, sort_keys=True,
+                  indent=1, separators=(',', ': '))
+          self.push('200 %d' % len(txt))
+          self.pushdata(txt)
+
+        elif mode == 'mime':
+          msglen = len(msg['data'])
+          self.push('200 %d' % msglen)
+          self.pushdata(msg['data'])
+
+        else:
+          msglen = len(msg['payload'])
+          self.push('200 %d' % msglen)
+          self.pushdata(msg['payload'])
 
       else:
-        self.push('501 Syntax: MSGGET <recipient> <msgnr>')
+        self.push('500 Syntax: MSGGET <recipient> <msgnr>')
 
     def smtpmgmt_DUMP(self, arg):
 
       if len(self.__mailstore):
-        self.push('250 List')
+
         if arg == 'json':
           txt = json.dumps(self.__mailstore, sort_keys=True,
                   indent=1, separators=(',', ': '))
-          self.push(txt)
+
+          self.push('200 %d' % len(txt))
+          self.pushdata(txt)
 
         else:
+          lines = 0
+          for rcpt in self.__mailstore:
+            lines += 1
+            msgs = self.__mailstore[rcpt]
+            lines += len(msgs)
+
+          self.push('210 %d' % lines)
+
           for rcpt in self.__mailstore:
             self.push('%s:' % rcpt)
             msgs = self.__mailstore[rcpt]
             idx = 1
+
             for msg in msgs:
               self.push("\t%03d:%s" % (idx, msg['subject']) )
               idx += 1
 
-        self.push('')
+
 
       else:
         self.push('250 No entries')
 
     def smtpmgmt_HELP(self, arg):
-      self.push('250 Avaiable commands:')
-      self.push('HELO    : Handshake')
-      self.push('NOOP    : Does nothing')
-      self.push('RESET   : Clears the mail store')
-      self.push('MSGCNT  : Message count for a recipient')
-      self.push('MSGLST  : List all id,subjects of a recipient')
-      self.push('MSGGET  : Get payload of a numbered message from recipient')
-      self.push('DUMP    : Dumps the current mail store')
-      self.push('QUIT    : Quits the session')
-      self.push('')         # blank line indicated end
+
+      cmds = [ 'Avaiable commands:'
+        , 'HELO    : Handshake'
+        , 'NOOP    : Does nothing'
+        , 'RESET   : Clears the mail store'
+        , 'MSGCNT  : Message count for a recipient'
+        , 'MSGLST  : List all id,subjects of a recipient'
+        , 'MSGGET  : Get payload of a numbered message from recipient'
+        , 'DUMP    : Dumps the current mail store'
+        , 'HELP    : Help'
+        , 'ECHO    : Echos message'
+        , 'QUIT    : Quits the session'
+      ]
+      self.push('210 %d' + len(cmds))
+      for c in cmds:
+        self.push(c)
+
 
     def smtpmgmt_QUIT(self, arg):
       # args is ignored
-      self.push('221 Bye')
+      self.push('100 Bye')
       self.close_when_done()
 
 class SMTPMgmtServer(asyncore.dispatcher):
@@ -274,12 +339,10 @@ class SMTPStubServer(smtpd.SMTPServer):
 
         self.__mailstore[rcpt].append(d)
 
-      print 'Receiving message from:', peer
-      print 'Message addressed from:', mailfrom
-      print 'Message addressed to  :', rcpttos
-      print 'Message length        :', len(data)
-
-      print self.__mailstore
+      # print 'Receiving message from:', peer
+      # print 'Message addressed from:', mailfrom
+      # print 'Message addressed to  :', rcpttos
+      # print 'Message length        :', len(data)
 
 server = SMTPStubServer(('127.0.0.1', SMTP_PORT), None, __mailstore)
 server_mgmt = SMTPMgmtServer(('127.0.0.1', SMTP_MGMT_PORT), __mailstore)
