@@ -12,7 +12,7 @@ import json
 program = sys.argv[0]
 __version__ = 'SMTP Stub version 0.1'
 
-SMTP_PORT = 2525
+SMTP_PORT = 25
 SMTP_MGMT_PORT = 5252
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.DEBUG)

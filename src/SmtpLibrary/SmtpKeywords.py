@@ -3,6 +3,10 @@ from robot.libraries.Process import Process
 import sys
 import os
 import subprocess
+from SmtpLibrary import SmtpMgmtClient
+import smtplib
+import email.utils
+from email.mime.text import MIMEText
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -10,13 +14,16 @@ class SmtpKeywords():
   __stub_started = False
   __smtphost = None
   __smtpport = None
-  __stub_handle = None
+  __mgmtclient = None
 
-  def __init__(self, smtphost='localhost', smtpport=25):
+  def __init__(self, smtphost='localhost', smtpport=25, smtpmgmtport=5252):
     self.__smtphost = smtphost
     self.__smtpport = smtpport
+    self.__smtpmgmtport = smtpmgmtport
 
-  # Stub handling
+  def __open_smtpmgmt_session(self):
+    self.__mgmtclient = SmtpMgmtClient.SmtpMgmtClient(self.__smtphost, self.__smtpmgmtport)
+
 
   def start_smtp_stub(self):
     if not self.__stub_started:
@@ -40,30 +47,61 @@ class SmtpKeywords():
 
     self.__stub_started = False
 
-  def reset_smtp_stub(self):
-    """ Reset Smtp Stub
-
-    Reset (clears) the mail store
+  def clear_mailstore(self):
     """
-    logger.info('Reset mail store')
-    if not self.__smtpserver:
-      self.open_smtpmgmt_session()
+    Clears the internal mailstore
+    """
+    logger.info('Clear mail store')
+    if not self.__mgmtclient:
+      self.__open_smtpmgmt_session()
+
+    self.__mgmtclient.reset()
 
   # Smtp Manager
 
   def get_message_count(self, recipient):
-    pass
+    """
+    Get message count for a recipient
+    """
+    logger.info('Get message count for "%s"' % recipient)
+    if not self.__mgmtclient:
+      self.__open_smtpmgmt_session()
 
-  def get_message_list(self, recipient):
-    pass
+    return self.__mgmtclient.msgcnt(recipient)
+
+  def get_json_message_list(self, recipient):
+    return self.get_message_list(recipient, 'json')
+
+  def get_message_list(self, recipient, mode=None):
+    """
+    Get message list for recipient
+    """
+    logger.info('Get message list for "%s"' % recipient)
+    if not self.__mgmtclient:
+      self.__open_smtpmgmt_session()
+
+    return self.__mgmtclient.msglst(recipient, mode)
 
   def get_message_content(self, recipient, messageid):
-    pass
+    return self.get_message(recipient, messageid)
 
+  def get_mime_message(self, recipient, messageid):
+    return self.get_message(recipient, messageid, 'mime')
+
+  def get_json_message(self, recipient, messageid):
+    return self.get_message(recipient, messageid, 'json')
+
+  def get_message(self, recipient, messageid, mode=None):
+    msgid = int(messageid)
+    logger.info('Get message for "%s" msgid: %d' % (recipient, msgid))
+    if not self.__mgmtclient:
+      self.__open_smtpmgmt_session()
+
+    return self.__mgmtclient.msgget(recipient, msgid, mode)
 
   # Smtp Client
-  def get_mail_address(self, sendername, senderemail):
-    pass
+  def get_mail_address(self, name, emailaddress):
+    return email.utils.formataddr((name, emailaddress))
 
   def send_message(self, senderaddr, recipients, subject, body):
     # Create the message
@@ -79,3 +117,17 @@ class SmtpKeywords():
     finally:
         server.quit()
     pass
+
+  def send_simple_message(self, senderaddr, recipient, subject='No subject', body=None):
+    # Create the message
+    msg = MIMEText(body)
+    msg['To'] = email.utils.formataddr(('Recipient', recipient))
+    msg['From'] = email.utils.formataddr(('Author', senderaddr))
+    msg['Subject'] = subject
+
+    server = smtplib.SMTP(self.__smtphost, self.__smtpport)
+    #server.set_debuglevel(True) # show communication with the server
+    try:
+        server.sendmail(senderaddr, [recipient], msg.as_string())
+    finally:
+        server.quit()

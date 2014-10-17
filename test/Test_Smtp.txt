@@ -1,11 +1,10 @@
 *** Settings ***
-Library           ../src/SmtpLibrary
+Library           SmtpLibrary
 
 *** Test Cases ***
-Test start/stop
-    Start Smtp Stub
-    Sleep    3s
-    Stop Smtp Stub
-
-Reset mail store
-    Reset Smtp Stub
+Send message and count it
+    Clear Mailstore
+    Send Simple Message    aap@zoo.com    tijger@zoo.com    Oe oe a    Oe oe
+    ${cnt}=    Get Message Count    tijger@zoo.com
+    Should Be Equal as Integers    1    ${cnt}
+    ${plain}=    Get Mime Message    tijger@zoo.com    1

@@ -27,7 +27,7 @@ if cnt>0:
 
   msg = client.msgget('recipient1@example.com', 1, 'mime')
   print 'Message mime:'
-  print msg
+  print repr(msg)
 
 client.reset()
 
