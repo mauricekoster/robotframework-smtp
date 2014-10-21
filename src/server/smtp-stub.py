@@ -279,7 +279,7 @@ class SMTPMgmtChannel(asynchat.async_chat):
         , 'ECHO    : Echos message'
         , 'QUIT    : Quits the session'
       ]
-      self.push('210 %d' + len(cmds))
+      self.push('210 %d' % len(cmds))
       for c in cmds:
         self.push(c)
 

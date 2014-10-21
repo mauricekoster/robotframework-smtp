@@ -99,6 +99,15 @@ class SmtpKeywords():
 
     return self.__mgmtclient.msgget(recipient, msgid, mode)
 
+  def get_message_subject(self, recipient, messageid):
+    msgid = int(messageid)
+    logger.info('Get message subject for "%s" msgid: %d' % (recipient, msgid))
+    if not self.__mgmtclient:
+      self.__open_smtpmgmt_session()
+
+    msg = self.__mgmtclient.msgget(recipient, msgid, 'mime')
+    return msg['Subject']
+    
   # Smtp Client
   def get_mail_address(self, name, emailaddress):
     return email.utils.formataddr((name, emailaddress))
