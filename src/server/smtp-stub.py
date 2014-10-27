@@ -8,26 +8,82 @@ import socket
 import time
 from email.parser import Parser
 import json
+import smtplib
+import argparse
 
-program = sys.argv[0]
-__version__ = 'SMTP Stub version 0.1'
+# === Configuration ========================================================================
+argparser = argparse.ArgumentParser()
+argparser.add_argument("--host", help="Hostname of listening address. (Default: localhost)")
+argparser.add_argument("--port", type=int,  help="Portnumber of listening address. (Default: 25)")
+argparser.add_argument("--mgmtport", type=int,  help="Portnumber of management interface. (Default: 5252)")
 
-SMTP_PORT = 25
+argparser.add_argument("--proxyhost", help="Hostname of smtp host address for relaying messages. (Default: localhost)")
+argparser.add_argument("--proxyport", type=int,  help="Portnumber of smtp host address for relaying messages. (Default: 2525)")
+argparser.add_argument("-p", "--proxy", action="store_true")
+argparser.add_argument("-c", "--check", action="store_true")
+args = argparser.parse_args()
+
+print args
+
+SMTP_HOST = 'localhost'
+if args.port:
+    SMTP_PORT = args.port
+else:
+    SMTP_PORT = 25
+
+SMTP_MGMT_HOST = 'localhost'
 SMTP_MGMT_PORT = 5252
 
+use_proxy=False
+if args.proxy:
+    use_proxy=True
+
+SMTP_PROXY_HOST='localhost'
+SMTP_PROXY_PORT=2525
+
+if args.proxyhost:
+    use_proxy=True
+    SMTP_PROXY_HOST=args.proxyhost
+if args.proxyport:
+    use_proxy=True
+    SMTP_PROXY_PORT=args.proxyport
+
+# === Program info =============================================================
+program = sys.argv[0]
+__version__ = 'SMTP Stub version 0.2'
+
+# === Log settings =============================================================
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
-logger.info("basedir: %s" % base_dir)
 
+# === Configuration summary ====================================================
+logger.info("version: %s" % __version__)
+logger.info("basedir: %s" % base_dir)
+logger.info("host: %s" % SMTP_HOST)
+logger.info("port: %s" % SMTP_PORT)
+logger.info("mgmt host: %s" % SMTP_MGMT_HOST)
+logger.info("mgmt port: %s" % SMTP_MGMT_PORT)
+
+if use_proxy:
+    logger.info('proxy mode on.')
+    logger.info("proxy host: %s" % SMTP_PROXY_HOST)
+    logger.info("proxy port: %s" % SMTP_PROXY_PORT)
+else:
+    logger.info('proxy mode off.')
+
+if args.check:
+    # Just a config check. Exiting here...
+    sys.exit()
+
+# === Private constants=========================================================
 NEWLINE = '\n'
 EMPTYSTRING = ''
 COMMASPACE = ', '
 
 # Internal mail store
 __mailstore = {}
-
 
 class SMTPMgmtChannel(asynchat.async_chat):
     COMMAND = 0
@@ -318,11 +374,20 @@ class SMTPMgmtServer(asyncore.dispatcher):
 
 
 class SMTPStubServer(smtpd.SMTPServer):
+    proxyenabled = False
+    proxyhost = None
+    proxyport = None
+
     def __init__(self, localaddr, remoteaddr, mailstore):
       smtpd.SMTPServer.__init__(self, localaddr, remoteaddr)
       self.__mailstore = mailstore
 
     def process_message(self, peer, mailfrom, rcpttos, data):
+
+      if self.proxyenabled:
+          refused = self._deliver(mailfrom, rcpttos, data)
+          if refused:
+              logger.error(refused)
 
       msg = Parser().parsestr( data )
       print repr(msg)
@@ -344,8 +409,46 @@ class SMTPStubServer(smtpd.SMTPServer):
       # print 'Message addressed to  :', rcpttos
       # print 'Message length        :', len(data)
 
-server = SMTPStubServer(('127.0.0.1', SMTP_PORT), None, __mailstore)
-server_mgmt = SMTPMgmtServer(('127.0.0.1', SMTP_MGMT_PORT), __mailstore)
+    def _deliver(self, mailfrom, rcpttos, data):
+        if not self.proxyenabled:
+            return {}
+
+        refused = {}
+        try:
+            s = smtplib.SMTP()
+            s.connect(self.proxyhost, self.proxyport)
+            try:
+                refused = s.sendmail(mailfrom, rcpttos, data)
+            finally:
+                s.quit()
+        except smtplib.SMTPRecipientsRefused, e:
+            logger.debug('got SMTPRecipientsRefused')
+            refused = e.recipients
+        except (socket.error, smtplib.SMTPException), e:
+            logger.debug('got', e.__class__)
+            # All recipients were refused.  If the exception had an associated
+            # error code, use it.  Otherwise,fake it with a non-triggering
+            # exception code.
+            errcode = getattr(e, 'smtp_code', -1)
+            errmsg = getattr(e, 'smtp_error', 'ignore')
+            for r in rcpttos:
+                refused[r] = (errcode, errmsg)
+        return refused
+
+    def enable_proxy(self, proxyhost='localhost', proxyport=25):
+        self.proxyhost = proxyhost
+        self.proxyport = proxyport
+        self.proxyenabled=True
+
+
+
+
+# === Main======================================================================
+server = SMTPStubServer((SMTP_HOST, SMTP_PORT), None, __mailstore)
+if use_proxy:
+    server.enable_proxy(SMTP_PROXY_HOST, SMTP_PROXY_PORT)
+
+server_mgmt = SMTPMgmtServer((SMTP_MGMT_HOST, SMTP_MGMT_PORT), __mailstore)
 
 
 try:
