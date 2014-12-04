@@ -13,40 +13,22 @@ import argparse
 
 # === Configuration ========================================================================
 argparser = argparse.ArgumentParser()
-argparser.add_argument("--host", help="Hostname of listening address. (Default: localhost)")
-argparser.add_argument("--port", type=int,  help="Portnumber of listening address. (Default: 25)")
-argparser.add_argument("--mgmtport", type=int,  help="Portnumber of management interface. (Default: 5252)")
+argparser.add_argument("--host", help="Hostname of listening address. (Default: localhost)", default='localhost')
+argparser.add_argument("--port", type=int,  help="Portnumber of listening address. (Default: 25)", default=25)
+argparser.add_argument("--mgmthost", help="Hostname of management interface. (Default: localhost)", default='localhost')
+argparser.add_argument("--mgmtport", type=int,  help="Portnumber of management interface. (Default: 5252)", default=5252)
 
-argparser.add_argument("--proxyhost", help="Hostname of smtp host address for relaying messages. (Default: localhost)")
-argparser.add_argument("--proxyport", type=int,  help="Portnumber of smtp host address for relaying messages. (Default: 2525)")
-argparser.add_argument("-p", "--proxy", action="store_true")
-argparser.add_argument("-c", "--check", action="store_true")
+argparser.add_argument("--proxyhost", help="Hostname of smtp host address for relaying messages. (Default: localhost)", default='localhost')
+argparser.add_argument("--proxyport", type=int,  help="Portnumber of smtp host address for relaying messages. (Default: 2525)", default=2525)
+argparser.add_argument("-p", "--proxy", action="store_true", help="Enable proxy mode. This will relay messages to smtp server defined by proxyhost and proxyport.")
+argparser.add_argument("-c", "--check", action="store_true", help="Check the arguments used")
 args = argparser.parse_args()
 
 print args
 
-SMTP_HOST = 'localhost'
-if args.port:
-    SMTP_PORT = args.port
-else:
-    SMTP_PORT = 25
-
-SMTP_MGMT_HOST = 'localhost'
-SMTP_MGMT_PORT = 5252
-
 use_proxy=False
 if args.proxy:
     use_proxy=True
-
-SMTP_PROXY_HOST='localhost'
-SMTP_PROXY_PORT=2525
-
-if args.proxyhost:
-    use_proxy=True
-    SMTP_PROXY_HOST=args.proxyhost
-if args.proxyport:
-    use_proxy=True
-    SMTP_PROXY_PORT=args.proxyport
 
 # === Program info =============================================================
 program = sys.argv[0]
@@ -61,15 +43,15 @@ base_dir = os.path.dirname(os.path.abspath(__file__))
 # === Configuration summary ====================================================
 logger.info("version: %s" % __version__)
 logger.info("basedir: %s" % base_dir)
-logger.info("host: %s" % SMTP_HOST)
-logger.info("port: %s" % SMTP_PORT)
-logger.info("mgmt host: %s" % SMTP_MGMT_HOST)
-logger.info("mgmt port: %s" % SMTP_MGMT_PORT)
+logger.info("host: %s" % args.host)
+logger.info("port: %s" % args.port)
+logger.info("mgmt host: %s" % args.mgmthost)
+logger.info("mgmt port: %s" % args.mgmtport)
 
 if use_proxy:
     logger.info('proxy mode on.')
-    logger.info("proxy host: %s" % SMTP_PROXY_HOST)
-    logger.info("proxy port: %s" % SMTP_PROXY_PORT)
+    logger.info("proxy host: %s" % args.proxyhost)
+    logger.info("proxy port: %s" % args.proxyport)
 else:
     logger.info('proxy mode off.')
 
@@ -266,8 +248,20 @@ class SMTPMgmtChannel(asynchat.async_chat):
         else:
           mode = 'plain'
 
+        if rcpt in self.__mailstore:
         msgs = self.__mailstore[rcpt]
+            if len(msgs)==0:
+                self.push('500 No messages')
+            elif int(idx) > len(msgs):
+                self.push('500 Index: maximum exceeded')
+            else:
+                if idx>0:
         msg = msgs[int(idx)-1]
+                elif idx<0:
+                    msg = msgs[idx]
+                else:
+                    msg = msgs[0]
+
         if mode == 'json':
           txt = json.dumps(msg, sort_keys=True,
                   indent=1, separators=(',', ': '))
@@ -283,6 +277,8 @@ class SMTPMgmtChannel(asynchat.async_chat):
           msglen = len(msg['payload'])
           self.push('200 %d' % msglen)
           self.pushdata(msg['payload'])
+        else:
+            self.push('500 Unknown recipient')
 
       else:
         self.push('500 Syntax: MSGGET <recipient> <msgnr>')
@@ -444,11 +440,11 @@ class SMTPStubServer(smtpd.SMTPServer):
 
 
 # === Main======================================================================
-server = SMTPStubServer((SMTP_HOST, SMTP_PORT), None, __mailstore)
+server = SMTPStubServer((args.host, args.port), None, __mailstore)
 if use_proxy:
-    server.enable_proxy(SMTP_PROXY_HOST, SMTP_PROXY_PORT)
+    server.enable_proxy(args.proxyhost, args.proxyport)
 
-server_mgmt = SMTPMgmtServer((SMTP_MGMT_HOST, SMTP_MGMT_PORT), __mailstore)
+server_mgmt = SMTPMgmtServer((args.mgmthost, args.mgmtport), __mailstore)
 
 
 try:

@@ -74,7 +74,6 @@ class SmtpMgmtClient():
 
       if code == 500:
         # error
-        self.logger.error('ERROR: %s' % rest )
         raise SmtpMsgmtException(rest)
         return None
 
