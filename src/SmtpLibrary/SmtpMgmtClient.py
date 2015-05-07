@@ -1,6 +1,10 @@
 import logging
 import socket
-import json
+import platform
+if platform.system()=='Java':
+	import com.xhaus.jyson.JysonCodec as json
+else:
+	import json
 import email.parser
 
 class SmtpMsgmtException(Exception):  pass

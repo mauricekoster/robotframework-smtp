@@ -16,13 +16,15 @@ class SmtpKeywords():
   __smtpport = None
   __mgmtclient = None
 
-  def __init__(self, smtphost='localhost', smtpport=25, smtpmgmtport=5252):
+  def __init__(self, smtphost='localhost', smtpport=25, smtpmgmthost='localhost', smtpmgmtport=5252):
     self.__smtphost = smtphost
     self.__smtpport = smtpport
+    self.__smtpmgmthost = smtpmgmthost
     self.__smtpmgmtport = smtpmgmtport
 
   def __open_smtpmgmt_session(self):
-    self.__mgmtclient = SmtpMgmtClient.SmtpMgmtClient(self.__smtphost, self.__smtpmgmtport)
+    logger.info('Connecting to management console (%s, %d)' % (self.__smtpmgmthost, self.__smtpmgmtport))
+    self.__mgmtclient = SmtpMgmtClient.SmtpMgmtClient(self.__smtpmgmthost, self.__smtpmgmtport)
 
 
   def start_smtp_stub(self):
@@ -107,7 +109,23 @@ class SmtpKeywords():
 
     msg = self.__mgmtclient.msgget(recipient, msgid, 'mime')
     return msg['Subject']
-    
+
+  def get_message_part(self, recipient, messageid, part_nr):
+    msgid = int(messageid)
+    part = int(part_nr)-1
+    logger.info('Get messagepart for "%s" msgid: %d, part %d' % (recipient, msgid, part))
+    if not self.__mgmtclient:
+      self.__open_smtpmgmt_session()
+
+    msg = self.__mgmtclient.msgget(recipient, msgid, 'mime')
+    logger.debug('  Nr of parts: %d' % len(msg.get_payload()) )
+
+    payload = msg.get_payload()[part]
+    logger.debug('  Filename: %s', payload.get_filename() )
+    logger.debug('  Content-Type: %s' % payload.get_content_type() )
+    return payload.get_payload(decode=True)
+
+
   # Smtp Client
   def get_mail_address(self, name, emailaddress):
     return email.utils.formataddr((name, emailaddress))
